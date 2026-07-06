@@ -43,7 +43,7 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+html { font-size: 16px; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
 
 body {
   background: var(--bg);
@@ -51,6 +51,8 @@ body {
   font-family: var(--font-body);
   line-height: 1.6;
   min-height: 100vh;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 ::selection { background: var(--accent); color: #000; }
@@ -75,6 +77,8 @@ body {
   top: 0; left: 0; bottom: 0;
   z-index: 40;
   padding: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sidebar-logo {
@@ -157,8 +161,8 @@ body {
   color: var(--text-muted);
   line-height: 1.5;
 }
-.sidebar-user-name { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
-.sidebar-user-email { font-size: 10.5px; color: var(--text-muted); margin-top: 1px; }
+.sidebar-user-name { font-size: 12.5px; font-weight: 600; color: var(--text-primary); overflow-wrap: break-word; }
+.sidebar-user-email { font-size: 10.5px; color: var(--text-muted); margin-top: 1px; overflow-wrap: break-word; }
 .sidebar-logout {
   margin-top: 8px;
   font-size: 11px;
@@ -226,11 +230,11 @@ body {
 .hamburger span { width: 16px; height: 2px; background: var(--text-primary); border-radius: 2px; }
 
 .sidebar-backdrop {
-  display: none;
+  display: block;
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.55);
-  z-index: 39;
+  z-index: 55;
 }
 
 .main { margin-left: 220px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
@@ -395,6 +399,49 @@ select { cursor: pointer; }
 
 /* ── Dish Grid ── */
 .dish-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+
+/* ── Dashboards (uploaded HTML/PPT analysis files) ── */
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.dashboard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+}
+.dashboard-card-icon {
+  width: 42px; height: 42px; flex-shrink: 0;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  color: var(--accent);
+}
+.dashboard-card-body { flex: 1; min-width: 0; }
+.dashboard-card-title { font-weight: 600; font-size: 13.5px; color: var(--text-primary); word-break: break-word; }
+.dashboard-card-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+.dashboard-card-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+.dashboard-preview-modal {
+  max-width: 90vw;
+  width: 1000px;
+  height: 85vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dashboard-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.dashboard-preview-title { font-family: var(--font-display); font-weight: 700; font-size: 14px; }
+.dashboard-preview-frame { flex: 1; width: 100%; border: none; background: #fff; }
+
 
 .dish-card {
   background: var(--surface);
@@ -778,12 +825,12 @@ select { cursor: pointer; }
     transform: translateX(-100%);
     transition: transform 0.25s ease;
     box-shadow: var(--shadow-lg);
+    z-index: 60;
   }
   .sidebar.open { transform: translateX(0); }
-  .sidebar-backdrop.open, .sidebar.open ~ .sidebar-backdrop { display: block; }
   .main { margin-left: 0; }
   .content { padding: 22px 20px 60px; }
-  .topbar { padding: 16px 20px 0; }
+  .topbar { position: static; padding: 16px 20px 0; }
   .dish-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .history-export { margin-left: 0; width: 100%; }
   .history-export .btn { flex: 1; justify-content: center; }
@@ -791,7 +838,7 @@ select { cursor: pointer; }
 
 @media (max-width: 600px) {
   .content { padding: 18px 14px 56px; }
-  .topbar { padding: 14px 14px 0; }
+  .topbar { position: static; padding: 14px 14px 0; }
   .page-title { font-size: 21px; }
   .card { padding: 16px 16px; }
   .stamp { position: static; transform: none; margin: 10px auto 0; animation: none; }
@@ -833,6 +880,7 @@ select { cursor: pointer; }
   justify-content: center;
   background: var(--bg);
   padding: 24px;
+  overflow-y: auto;
 }
 .auth-card {
   width: 100%;

@@ -9,6 +9,7 @@ const dishesRouter = require('./routes/dishes');
 const restaurantsRouter = require('./routes/restaurants');
 const auditsRouter = require('./routes/audits');
 const aiRouter = require('./routes/ai');
+const dashboardsRouter = require('./routes/dashboards');
 const { requireAuth } = require('./middleware/auth');
 
 const app = express();
@@ -19,8 +20,8 @@ app.use(cors({
   credentials: true,
 }));
 
-// Body parsing — increased limit for base64 images
-app.use(express.json({ limit: '20mb' }));
+// Body parsing — increased limit for base64 images and uploaded dashboard files (HTML/PPT up to ~20MB)
+app.use(express.json({ limit: '30mb' }));
 
 // Rate limiting
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
@@ -39,6 +40,7 @@ app.use('/api/dishes', requireAuth, dishesRouter);
 app.use('/api/restaurants', requireAuth, restaurantsRouter);
 app.use('/api/audits', requireAuth, auditsRouter);
 app.use('/api/ai', requireAuth, aiLimiter, aiRouter);
+app.use('/api/dashboards', requireAuth, dashboardsRouter);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

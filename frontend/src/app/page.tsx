@@ -8,15 +8,16 @@ import {
   createRestaurant, updateRestaurant, deleteRestaurant,
   createBranch, updateBranch, deleteBranch,
   downloadAuditsCsv,
-  type Dish, type Audit, type Analytics, type Restaurant, type Branch,
+  getDashboards, uploadDashboard, deleteDashboard, getDashboardFileBlobUrl, downloadDashboardFile,
+  type Dish, type Audit, type Analytics, type Restaurant, type Branch, type DashboardFile,
 } from '../lib/api';
 import { downloadAuditsExcel } from '../lib/export';
-import { fileToResizedBase64 } from '../lib/image';
+import { fileToResizedBase64, fileToBase64 } from '../lib/image';
 import { LocationProvider, useLocation } from '../lib/location-context';
 import { AuthProvider, useAuth } from '../lib/auth-context';
 import CameraCapture from '../components/CameraCapture';
 
-type View = 'library' | 'audit' | 'history' | 'analytics' | 'locations';
+type View = 'library' | 'audit' | 'history' | 'analytics' | 'locations' | 'dashboards';
 type Verdict = 'Pass' | 'Needs Review' | 'Fail';
 
 function verdictClass(v: string) {
@@ -181,6 +182,7 @@ function AppShell() {
             ['audit', '◎', 'Run Audit'],
             ['history', '◫', 'History'],
             ['analytics', '◈', 'Analytics'],
+            ['dashboards', '▤', 'Dashboards'],
             ['locations', '⌂', 'Restaurants & Branches'],
           ] as [View, string, string][]).map(([id, icon, label]) => (
             <button
@@ -210,6 +212,7 @@ function AppShell() {
         {view === 'audit' && <AuditView toast={toast.show} />}
         {view === 'history' && <HistoryView toast={toast.show} />}
         {view === 'analytics' && <AnalyticsView />}
+        {view === 'dashboards' && <DashboardsView toast={toast.show} />}
         {view === 'locations' && <LocationsView toast={toast.show} />}
       </div>
 
@@ -972,6 +975,231 @@ function AnalyticsView() {
 // ─────────────────────────────────────────
 // Locations View — manage restaurants & branches
 // ─────────────────────────────────────────
+// ─────────────────────────────────────────
+// Dashboards View — upload/store previous analysis dashboards (HTML/PPT), per restaurant/branch
+// ─────────────────────────────────────────
+function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
+  const [items, setItems] = useState<DashboardFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [filterRestaurant, setFilterRestaurant] = useState('');
+  const [filterBranch, setFilterBranch] = useState('');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewTitle, setPreviewTitle] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { restaurants, selectedRestaurant, selectedBranch } = useLocation();
+
+  const activeFilterRestaurant = restaurants.find(r => r.id === filterRestaurant);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (filterRestaurant) params.restaurantId = filterRestaurant;
+      if (filterBranch) params.branchId = filterBranch;
+      setItems(await getDashboards(params));
+    } catch { toast('Failed to load dashboards', 'err'); }
+    finally { setLoading(false); }
+  }, [filterRestaurant, filterBranch, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function handlePickFile(f: File) {
+    const okExt = /\.(html?|pptx?)$/i.test(f.name);
+    if (!okExt) { toast('Only .html, .ppt, or .pptx files are accepted', 'err'); return; }
+    if (f.size > 20 * 1024 * 1024) { toast('File is too large — please keep uploads under 20MB', 'err'); return; }
+    setFile(f);
+    if (!title) setTitle(f.name.replace(/\.[^.]+$/, ''));
+  }
+
+  async function handleUpload() {
+    if (!selectedRestaurant || !selectedBranch) { toast('Select a restaurant and branch in the sidebar first', 'err'); return; }
+    if (!file) { toast('Choose a file to upload', 'err'); return; }
+    if (!title.trim()) { toast('Give this dashboard a title', 'err'); return; }
+
+    setUploading(true);
+    try {
+      const fileData = await fileToBase64(file);
+      const mimeType = /\.html?$/i.test(file.name)
+        ? 'text/html'
+        : file.name.toLowerCase().endsWith('.pptx')
+          ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+          : 'application/vnd.ms-powerpoint';
+
+      await uploadDashboard({
+        restaurantId: selectedRestaurant.id,
+        branchId: selectedBranch.id,
+        restaurantName: selectedRestaurant.name,
+        branchName: selectedBranch.name,
+        title: title.trim(),
+        fileName: file.name,
+        mimeType,
+        fileData,
+      });
+      setTitle('');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      toast('Dashboard uploaded', 'ok');
+      load();
+    } catch (e: any) {
+      toast(e.message || 'Failed to upload dashboard', 'err');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleView(d: DashboardFile) {
+    if (d.mimeType !== 'text/html') { handleDownload(d); return; }
+    try {
+      const url = await getDashboardFileBlobUrl(d.id);
+      setPreviewUrl(url);
+      setPreviewTitle(d.title);
+    } catch (e: any) {
+      toast(e.message || 'Failed to open file', 'err');
+    }
+  }
+
+  async function handleDownload(d: DashboardFile) {
+    try {
+      await downloadDashboardFile(d.id, d.fileName);
+    } catch (e: any) {
+      toast(e.message || 'Failed to download file', 'err');
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Delete this dashboard?')) return;
+    try { await deleteDashboard(id); toast('Dashboard deleted'); load(); }
+    catch { toast('Failed to delete', 'err'); }
+  }
+
+  function closePreview() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewTitle('');
+  }
+
+  function formatSize(bytes: number) {
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return (
+    <>
+      <div className="topbar">
+        <div className="topbar-inner">
+          <div>
+            <div className="page-title">Dashboards</div>
+            <div className="page-sub">Store previous analysis dashboards (HTML or PowerPoint) per restaurant and branch.</div>
+          </div>
+        </div>
+        <div style={{ height: 20 }} />
+      </div>
+
+      <div className="content">
+        <div className="card">
+          <div className="card-title">Upload Dashboard</div>
+          {!selectedRestaurant || !selectedBranch ? (
+            <div className="location-warning" style={{ marginBottom: 0 }}>
+              ⚠ Select a restaurant and branch in the sidebar before uploading — every dashboard is tagged to that location.
+            </div>
+          ) : (
+            <>
+              <div className="location-chip" style={{ marginBottom: 14 }}>
+                Uploading to: <strong>{selectedRestaurant.name}</strong> · {selectedBranch.name}
+              </div>
+              <label>Title</label>
+              <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Q2 Kitchen Performance Review" />
+
+              <label style={{ marginTop: 14 }}>File</label>
+              <div
+                className="dropzone"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handlePickFile(f); }}
+              >
+                <div className="drop-icon">▤</div>
+                <div className="drop-title">{file ? file.name : 'Drop a file here or click to browse'}</div>
+                <div className="drop-hint">.html, .ppt, or .pptx — up to 20MB</div>
+              </div>
+              <input
+                ref={fileInputRef} type="file" accept=".html,.htm,.ppt,.pptx" style={{ display: 'none' }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handlePickFile(f); e.target.value = ''; }}
+              />
+
+              <div className="toolbar">
+                <button className="btn btn-primary" onClick={handleUpload} disabled={uploading || !file}>
+                  {uploading ? <><span className="spinner" />&nbsp;Uploading…</> : 'Upload'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="history-filters">
+          <select value={filterRestaurant} onChange={e => { setFilterRestaurant(e.target.value); setFilterBranch(''); }}>
+            <option value="">All restaurants</option>
+            {restaurants.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <select value={filterBranch} onChange={e => setFilterBranch(e.target.value)} disabled={!activeFilterRestaurant}>
+            <option value="">All branches</option>
+            {activeFilterRestaurant?.branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+            <span className="spinner spinner-white" /> Loading…
+          </div>
+        ) : items.length === 0 ? (
+          <div className="empty">
+            <div className="empty-icon">▤</div>
+            <div className="empty-title">No dashboards yet</div>
+            <div className="empty-body">Upload an HTML or PowerPoint dashboard above to store it here.</div>
+          </div>
+        ) : (
+          <div className="dashboard-grid">
+            {items.map(d => (
+              <div key={d.id} className="dashboard-card">
+                <div className="dashboard-card-icon">{d.mimeType === 'text/html' ? '◱' : '▥'}</div>
+                <div className="dashboard-card-body">
+                  <div className="dashboard-card-title">{d.title}</div>
+                  <div className="dashboard-card-meta">
+                    {d.restaurantName}{d.branchName ? ` · ${d.branchName}` : ''}<br />
+                    {formatSize(d.fileSize)} · {new Date(d.createdAt).toLocaleDateString()}
+                    {d.userName && <> · by {d.userName}</>}
+                  </div>
+                  <div className="dashboard-card-actions">
+                    {d.mimeType === 'text/html' && (
+                      <button className="btn btn-outline btn-sm" onClick={() => handleView(d)}>View</button>
+                    )}
+                    <button className="btn btn-outline btn-sm" onClick={() => handleDownload(d)}>Download</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => handleDelete(d.id)}>Delete</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {previewUrl && (
+        <div className="modal-backdrop" onClick={closePreview}>
+          <div className="modal dashboard-preview-modal" onClick={e => e.stopPropagation()}>
+            <div className="dashboard-preview-header">
+              <div className="dashboard-preview-title">{previewTitle}</div>
+              <button className="camera-close" onClick={closePreview} aria-label="Close preview">✕</button>
+            </div>
+            <iframe src={previewUrl} className="dashboard-preview-frame" title={previewTitle} sandbox="allow-scripts allow-same-origin" />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function LocationsView({ toast }: { toast: (m: string, t?: string) => void }) {
   const { restaurants, loading, reload } = useLocation();
   const [newRestaurant, setNewRestaurant] = useState('');

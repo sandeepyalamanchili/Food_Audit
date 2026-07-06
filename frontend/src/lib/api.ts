@@ -152,3 +152,54 @@ export async function downloadAuditsCsv(params?: Record<string, string>) {
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+// ─── Dashboards (previous analysis, HTML/PPT uploads) ──────
+export interface DashboardFile {
+  id: string;
+  restaurantId?: string | null;
+  branchId?: string | null;
+  restaurantName?: string | null;
+  branchName?: string | null;
+  title: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  userId?: string | null;
+  userName?: string | null;
+  createdAt: string;
+}
+
+export const getDashboards = (params?: Record<string, string>) => {
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return req<DashboardFile[]>(`/api/dashboards${qs}`);
+};
+
+export const uploadDashboard = (body: {
+  restaurantId?: string; branchId?: string; restaurantName?: string; branchName?: string;
+  title: string; fileName: string; mimeType: string; fileData: string;
+}) => req<DashboardFile>('/api/dashboards', { method: 'POST', body: JSON.stringify(body) });
+
+export const deleteDashboard = (id: string) => req<{ success: boolean }>(`/api/dashboards/${id}`, { method: 'DELETE' });
+
+// Fetches the raw file (with auth) and returns a blob URL — used both to preview
+// HTML dashboards inline and to trigger downloads for PPT/PPTX files.
+export async function getDashboardFileBlobUrl(id: string): Promise<string> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/api/dashboards/${id}/raw`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error('Failed to load file');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function downloadDashboardFile(id: string, fileName: string) {
+  const url = await getDashboardFileBlobUrl(id);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

@@ -21,6 +21,7 @@ Auth: **built-in email/password login** — accounts and sessions live in your o
 - **Manual override, so bad matches don't teach bad habits** — if the engine gets it wrong, pick the correct dish from a dropdown before saving; this is what it actually learns from next time.
 - **History with filters** — filter by restaurant, branch, dish, or verdict; see who audited each entry.
 - **Export to CSV or Excel (.xlsx)** — from the History view, export the currently filtered result set, including restaurant/branch, auditor, scores, verdicts, and the criteria breakdown.
+- **Dashboards library** — upload previous analysis dashboards (HTML or PowerPoint) tied to a restaurant/branch; HTML files open inline in the app, PPT/PPTX files download for viewing in PowerPoint.
 - **Responsive across devices** — a slide-out sidebar with a hamburger toggle on phones/tablets, a fixed sidebar on laptop/desktop, and layouts that reflow at both breakpoints.
 
 ---
@@ -183,6 +184,14 @@ Camera capture needs HTTPS to request permission in most browsers, except on `lo
 |--------|------|-------------|
 | POST | `/api/ai/identify` | Identify a dish by comparing its photo against every dish's learned profile |
 | POST | `/api/ai/audit` | Score a dish against its marking prompt's named criteria using visual similarity |
+
+### Dashboards
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/dashboards` | List uploaded dashboards (filters: `restaurantId`, `branchId`) |
+| POST | `/api/dashboards` | Upload a dashboard `{ title, fileName, mimeType, fileData, restaurantId?, branchId? }` — accepts `.html`, `.ppt`, `.pptx` up to 20MB |
+| GET | `/api/dashboards/:id/raw` | Serves the raw file — inline for HTML, as a download for PPT/PPTX |
+| DELETE | `/api/dashboards/:id` | Delete a dashboard |
 
 ---
 

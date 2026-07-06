@@ -1,3 +1,12 @@
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve((e.target!.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export function fileToResizedBase64(file: File, maxDim = 900): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();

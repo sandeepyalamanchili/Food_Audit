@@ -92,6 +92,27 @@ async function migrate() {
     await client.query(`CREATE INDEX IF NOT EXISTS audits_restaurant_id_idx ON audits(restaurant_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS audits_branch_id_idx ON audits(branch_id)`);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dashboards (
+        id TEXT PRIMARY KEY,
+        restaurant_id TEXT REFERENCES restaurants(id) ON DELETE SET NULL,
+        branch_id TEXT REFERENCES branches(id) ON DELETE SET NULL,
+        restaurant_name TEXT,
+        branch_name TEXT,
+        title TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_data TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS dashboards_restaurant_id_idx ON dashboards(restaurant_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS dashboards_branch_id_idx ON dashboards(branch_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS dashboards_created_at_idx ON dashboards(created_at DESC)`);
+
     await client.query('COMMIT');
     console.log('✅ Migration complete');
   } catch (e) {
