@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: food-audit-api
+    env: node
+    # The built-in vision model needs more memory than a bare API — if the Free
+    # plan (512MB) crashes or times out on audits, switch this to "starter".
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run db:migrate && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: food-audit-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+
+databases:
+  - name: food-audit-db
+    plan: free
