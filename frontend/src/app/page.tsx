@@ -912,8 +912,6 @@ function AnalyticsView() {
     </div>
   );
 
-  const s = data?.summary;
-
   return (
     <>
       <div className="topbar">
@@ -927,7 +925,7 @@ function AnalyticsView() {
       </div>
 
       <div className="content">
-        {!s || Number(s.total) === 0 ? (
+        {!data || data.totalAudits === 0 ? (
           <div className="empty">
             <div className="empty-icon">◈</div>
             <div className="empty-title">No data yet</div>
@@ -937,79 +935,37 @@ function AnalyticsView() {
           <>
             <div className="stat-grid">
               <div className="stat-box">
-                <div className="stat-val">{s.total}</div>
+                <div className="stat-val">{data.totalAudits}</div>
                 <div className="stat-lbl">Total Audits</div>
               </div>
               <div className="stat-box">
-                <div className="stat-val">{s.avg_pct}%</div>
+                <div className="stat-val">{data.avgScore}%</div>
                 <div className="stat-lbl">Average Score</div>
               </div>
               <div className="stat-box">
-                <div className="stat-val" style={{ color: 'var(--pass)' }}>{s.pass_count}</div>
+                <div className="stat-val" style={{ color: 'var(--pass)' }}>{data.passCount}</div>
                 <div className="stat-lbl">Passed</div>
               </div>
               <div className="stat-box">
-                <div className="stat-val" style={{ color: 'var(--warn)' }}>{s.review_count}</div>
+                <div className="stat-val" style={{ color: 'var(--warn)' }}>{data.reviewCount}</div>
                 <div className="stat-lbl">Need Review</div>
               </div>
               <div className="stat-box">
-                <div className="stat-val" style={{ color: 'var(--fail)' }}>{s.fail_count}</div>
+                <div className="stat-val" style={{ color: 'var(--fail)' }}>{data.failCount}</div>
                 <div className="stat-lbl">Failed</div>
               </div>
             </div>
 
-            {data?.trend && data.trend.length > 1 && (
+            {data.byDish && data.byDish.length > 0 && (
               <div className="chart-card">
-                <div className="chart-title">Average score % over time</div>
-                <TrendChart data={data.trend} />
-              </div>
-            )}
-
-            {data?.byDish && data.byDish.length > 0 && (
-              <div className="chart-card">
-                <div className="chart-title">Average score by dish</div>
-                <BarChart entries={data.byDish.map(d => ({ name: d.dish_name, avg: Number(d.avg_pct) }))} />
-              </div>
-            )}
-
-            {data?.weakCriteria && data.weakCriteria.length > 0 && (
-              <div className="chart-card">
-                <div className="chart-title">Weakest criteria (lowest avg %)</div>
-                <BarChart entries={data.weakCriteria} labelWidth={220} />
+                <div className="chart-title">Lowest-scoring dishes (avg %)</div>
+                <BarChart entries={data.byDish.map(d => ({ name: d.name, avg: d.avg }))} />
               </div>
             )}
           </>
         )}
       </div>
     </>
-  );
-}
-
-function TrendChart({ data }: { data: { day: string; avg_pct: string }[] }) {
-  const w = 800, h = 200, pad = 36;
-  const pts = data.map(d => Number(d.avg_pct));
-  const n = pts.length;
-  const xStep = n > 1 ? (w - pad * 2) / (n - 1) : 0;
-  const pathD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${(pad + i * xStep).toFixed(1)},${(h - pad - (p / 100) * (h - pad * 2)).toFixed(1)}`).join(' ');
-  const areaD = pathD + ` L${(pad + (n - 1) * xStep).toFixed(1)},${h - pad} L${pad},${h - pad} Z`;
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" style={{ overflow: 'visible', fontFamily: 'var(--font-mono)' }}>
-      {[0, 25, 50, 75, 100].map(v => {
-        const y = h - pad - (v / 100) * (h - pad * 2);
-        return <g key={v}>
-          <line x1={pad} y1={y} x2={w - pad} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-          <text x="4" y={y + 4} fontSize="10" fill="var(--text-muted)">{v}</text>
-        </g>;
-      })}
-      <path d={areaD} fill="rgba(212,168,83,0.07)" />
-      <path d={pathD} fill="none" stroke="var(--accent)" strokeWidth="2" />
-      {pts.map((p, i) => (
-        <circle key={i} cx={pad + i * xStep} cy={h - pad - (p / 100) * (h - pad * 2)} r="3.5" fill="var(--accent)">
-          <title>{Math.round(p)}%</title>
-        </circle>
-      ))}
-    </svg>
   );
 }
 
