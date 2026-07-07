@@ -8,8 +8,8 @@ import {
   createRestaurant, updateRestaurant, deleteRestaurant,
   createBranch, updateBranch, deleteBranch,
   downloadAuditsCsv,
-  getDashboards, uploadDashboard, deleteDashboard, getDashboardFileBlobUrl, downloadDashboardFile,
-  type Dish, type Audit, type Analytics, type Restaurant, type Branch, type DashboardFile,
+  getDashboards, uploadDashboard, deleteDashboard, downloadDashboardFile, getDashboardData,
+  type Dish, type Audit, type Analytics, type Restaurant, type Branch, type DashboardFile, type ExtractedTable,
 } from '../lib/api';
 import { downloadAuditsExcel } from '../lib/export';
 import { fileToResizedBase64, fileToBase64 } from '../lib/image';
@@ -182,7 +182,7 @@ function AppShell() {
             ['audit', '◎', 'Run Audit'],
             ['history', '◫', 'History'],
             ['analytics', '◈', 'Analytics'],
-            ['dashboards', '▤', 'Dashboards'],
+            ['dashboards', '▤', 'Data Uploads'],
             ['locations', '⌂', 'Restaurants & Branches'],
           ] as [View, string, string][]).map(([id, icon, label]) => (
             <button
@@ -904,16 +904,29 @@ function AuditDetail({ audit: a, onDelete }: { audit: Audit; onDelete: () => voi
 function AnalyticsView() {
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [filterRestaurant, setFilterRestaurant] = useState('');
+  const [filterBranch, setFilterBranch] = useState('');
+  const { restaurants } = useLocation();
+
+  const activeFilterRestaurant = restaurants.find(r => r.id === filterRestaurant);
+
+  const buildParams = useCallback((): Record<string, string> => {
+    const params: Record<string, string> = {};
+    if (fromDate) params.from = fromDate;
+    if (toDate) params.to = `${toDate}T23:59:59`; // make the end date inclusive of the whole day
+    if (filterRestaurant) params.restaurantId = filterRestaurant;
+    if (filterBranch) params.branchId = filterBranch;
+    return params;
+  }, [fromDate, toDate, filterRestaurant, filterBranch]);
 
   useEffect(() => {
-    getAnalytics().then(setData).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    setLoading(true);
+    getAnalytics(buildParams()).then(setData).catch(() => {}).finally(() => setLoading(false));
+  }, [buildParams]);
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-      <span className="spinner spinner-white" style={{ width: 28, height: 28, borderWidth: 3 }} />
-    </div>
-  );
+  function clearDateRange() { setFromDate(''); setToDate(''); }
 
   return (
     <>
@@ -921,18 +934,42 @@ function AnalyticsView() {
         <div className="topbar-inner">
           <div>
             <div className="page-title">Analytics</div>
-            <div className="page-sub">Trends and weak points across all saved audits.</div>
+            <div className="page-sub">Trends and weak points across all saved audits — pick a date range to look at any period in your history.</div>
           </div>
         </div>
         <div style={{ height: 20 }} />
       </div>
 
       <div className="content">
-        {!data || data.totalAudits === 0 ? (
+        <div className="history-filters">
+          <select value={filterRestaurant} onChange={e => { setFilterRestaurant(e.target.value); setFilterBranch(''); }}>
+            <option value="">All restaurants</option>
+            {restaurants.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <select value={filterBranch} onChange={e => setFilterBranch(e.target.value)} disabled={!activeFilterRestaurant}>
+            <option value="">All branches</option>
+            {activeFilterRestaurant?.branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+          <div className="date-range-picker">
+            <span className="date-range-label">From</span>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} max={toDate || undefined} />
+            <span className="date-range-label">To</span>
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} min={fromDate || undefined} />
+            {(fromDate || toDate) && <button className="btn btn-ghost btn-sm" onClick={clearDateRange}>Clear</button>}
+          </div>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 60 }}><span className="spinner spinner-white" /></div>
+        ) : !data || data.totalAudits === 0 ? (
           <div className="empty">
             <div className="empty-icon">◈</div>
             <div className="empty-title">No data yet</div>
-            <div className="empty-body">Save a few audits to see performance analytics.</div>
+            <div className="empty-body">
+              {fromDate || toDate || filterRestaurant
+                ? 'No audits match this filter — try widening the date range or clearing the location filter.'
+                : 'Save a few audits to see performance analytics.'}
+            </div>
           </div>
         ) : (
           <>
@@ -967,14 +1004,170 @@ function AnalyticsView() {
             )}
           </>
         )}
+
+        <DashboardDataExplorer />
       </div>
     </>
   );
 }
 
 // ─────────────────────────────────────────
-// Locations View — manage restaurants & branches
+// Uploaded Data Explorer — interactive charting of tables extracted from uploaded CSV/Excel files,
+// shown alongside the audit analytics above
 // ─────────────────────────────────────────
+function DashboardDataExplorer() {
+  const [dashboards, setDashboards] = useState<DashboardFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState('');
+  const [tables, setTables] = useState<ExtractedTable[]>([]);
+  const [tableIdx, setTableIdx] = useState(0);
+  const [labelCol, setLabelCol] = useState(0);
+  const [valueCol, setValueCol] = useState(0);
+  const [loadingTables, setLoadingTables] = useState(false);
+
+  useEffect(() => {
+    getDashboards().then(all => setDashboards(all.filter(d => d.tableCount > 0))).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) { setTables([]); return; }
+    setLoadingTables(true);
+    getDashboardData(selectedId)
+      .then(res => { setTables(res.tables); setTableIdx(0); })
+      .catch(() => setTables([]))
+      .finally(() => setLoadingTables(false));
+  }, [selectedId]);
+
+  const table = tables[tableIdx];
+
+  // Auto-pick sensible default columns whenever the active table changes
+  useEffect(() => {
+    if (!table) return;
+    const numericCols = table.headers.map((_, i) => i).filter(i => isNumericColumn(table, i));
+    const labelCandidate = table.headers.map((_, i) => i).find(i => !numericCols.includes(i)) ?? 0;
+    setLabelCol(labelCandidate);
+    setValueCol(numericCols[0] ?? 0);
+  }, [table]);
+
+  if (loading) return null;
+  if (dashboards.length === 0) return null; // nothing with tables uploaded yet — no need to show an empty section
+
+  const numericColumns = table ? table.headers.map((_, i) => i).filter(i => isNumericColumn(table, i)) : [];
+  const chartEntries = table
+    ? table.rows.slice(0, 30).map(r => ({ name: r[labelCol] || '—', value: parseNumericCell(r[valueCol]) }))
+    : [];
+
+  return (
+    <div className="chart-card" style={{ marginTop: 24 }}>
+      <div className="chart-title">Uploaded Data</div>
+      <div className="input-hint" style={{ marginBottom: 14 }}>
+        Sheets found inside CSV/Excel files you've uploaded — pick one below to chart its numbers alongside your audit stats.
+      </div>
+
+      <div className="history-filters" style={{ marginBottom: table ? 16 : 0 }}>
+        <select value={selectedId} onChange={e => setSelectedId(e.target.value)}>
+          <option value="">Select an uploaded file…</option>
+          {dashboards.map(d => (
+            <option key={d.id} value={d.id}>
+              {d.title} {d.restaurantName ? `— ${d.restaurantName}${d.branchName ? ` (${d.branchName})` : ''}` : ''}
+            </option>
+          ))}
+        </select>
+
+        {tables.length > 1 && (
+          <select value={tableIdx} onChange={e => setTableIdx(Number(e.target.value))}>
+            {tables.map((t, i) => <option key={i} value={i}>{t.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      {loadingTables && (
+        <div style={{ textAlign: 'center', padding: 24 }}><span className="spinner spinner-white" /></div>
+      )}
+
+      {!loadingTables && selectedId && !table && (
+        <div className="input-hint">No usable data could be read from this file.</div>
+      )}
+
+      {table && (
+        <>
+          <div className="history-filters" style={{ marginBottom: 16 }}>
+            <select value={labelCol} onChange={e => setLabelCol(Number(e.target.value))}>
+              {table.headers.map((h, i) => <option key={i} value={i}>Label: {h || `Column ${i + 1}`}</option>)}
+            </select>
+            <select value={valueCol} onChange={e => setValueCol(Number(e.target.value))}>
+              {(numericColumns.length ? numericColumns : table.headers.map((_, i) => i)).map(i => (
+                <option key={i} value={i}>Value: {table.headers[i] || `Column ${i + 1}`}</option>
+              ))}
+            </select>
+          </div>
+
+          {chartEntries.length > 0 && (
+            <GenericBarChart entries={chartEntries} />
+          )}
+
+          <div className="dashboard-table-wrap">
+            <table className="dashboard-table">
+              <thead>
+                <tr>{table.headers.map((h, i) => <th key={i}>{h || `Column ${i + 1}`}</th>)}</tr>
+              </thead>
+              <tbody>
+                {table.rows.slice(0, 50).map((r, ri) => (
+                  <tr key={ri}>{r.map((c, ci) => <td key={ci}>{c}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+            {table.rows.length > 50 && (
+              <div className="input-hint" style={{ marginTop: 8 }}>Showing the first 50 of {table.rows.length} rows.</div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function parseNumericCell(cell: string | undefined): number {
+  if (!cell) return 0;
+  const cleaned = cell.replace(/[,%$\s]/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+function isNumericColumn(table: ExtractedTable, colIdx: number): boolean {
+  const values = table.rows.map(r => r[colIdx]).filter(v => v !== undefined && v !== '');
+  if (!values.length) return false;
+  const numericCount = values.filter(v => !isNaN(parseFloat((v || '').replace(/[,%$\s]/g, '')))).length;
+  return numericCount / values.length >= 0.7;
+}
+
+// Generic bar chart for arbitrary numeric data (not locked to a 0-100% scale like the audit BarChart above)
+function GenericBarChart({ entries }: { entries: { name: string; value: number }[] }) {
+  const w = 800, barH = 28, gap = 10, padR = 70, labelWidth = 180;
+  const h = entries.length * (barH + gap) + 16;
+  const maxW = w - labelWidth - padR;
+  const maxVal = Math.max(1, ...entries.map(e => Math.abs(e.value)));
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" style={{ overflow: 'visible', fontFamily: 'var(--font-mono)' }}>
+      {entries.map((e, i) => {
+        const y = i * (barH + gap) + 8;
+        const bw = Math.max(2, (Math.abs(e.value) / maxVal) * maxW);
+        const label = e.name.length > 24 ? e.name.slice(0, 22) + '…' : e.name;
+        const displayVal = Number.isInteger(e.value) ? e.value.toLocaleString() : e.value.toFixed(2);
+        return (
+          <g key={i}>
+            <text x={labelWidth - 10} y={y + barH / 2 + 4} textAnchor="end" fontSize="12" fill="var(--text-secondary)">{label}</text>
+            <rect x={labelWidth} y={y} width={maxW} height={barH} fill="rgba(255,255,255,0.04)" rx="3" />
+            <rect x={labelWidth} y={y} width={bw} height={barH} fill="var(--accent)" rx="3" opacity="0.85" />
+            <text x={labelWidth + bw + 8} y={y + barH / 2 + 4} fontSize="12" fill="var(--text-primary)" fontWeight="600">{displayVal}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 // ─────────────────────────────────────────
 // Dashboards View — upload/store previous analysis dashboards (HTML/PPT), per restaurant/branch
 // ─────────────────────────────────────────
@@ -986,8 +1179,6 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const [filterRestaurant, setFilterRestaurant] = useState('');
   const [filterBranch, setFilterBranch] = useState('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewTitle, setPreviewTitle] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { restaurants, selectedRestaurant, selectedBranch } = useLocation();
 
@@ -1000,34 +1191,35 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
       if (filterRestaurant) params.restaurantId = filterRestaurant;
       if (filterBranch) params.branchId = filterBranch;
       setItems(await getDashboards(params));
-    } catch { toast('Failed to load dashboards', 'err'); }
+    } catch { toast('Failed to load uploaded files', 'err'); }
     finally { setLoading(false); }
   }, [filterRestaurant, filterBranch, toast]);
 
   useEffect(() => { load(); }, [load]);
 
   function handlePickFile(f: File) {
-    const okExt = /\.(html?|pptx?)$/i.test(f.name);
-    if (!okExt) { toast('Only .html, .ppt, or .pptx files are accepted', 'err'); return; }
+    const okExt = /\.(csv|xlsx?|xlsm)$/i.test(f.name);
+    if (!okExt) { toast('Only .csv, .xls, or .xlsx files are accepted', 'err'); return; }
     if (f.size > 20 * 1024 * 1024) { toast('File is too large — please keep uploads under 20MB', 'err'); return; }
     setFile(f);
     if (!title) setTitle(f.name.replace(/\.[^.]+$/, ''));
   }
 
+  function mimeTypeFor(f: File): string {
+    const name = f.name.toLowerCase();
+    if (name.endsWith('.csv')) return 'text/csv';
+    if (name.endsWith('.xls')) return 'application/vnd.ms-excel';
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; // .xlsx / .xlsm
+  }
+
   async function handleUpload() {
     if (!selectedRestaurant || !selectedBranch) { toast('Select a restaurant and branch in the sidebar first', 'err'); return; }
     if (!file) { toast('Choose a file to upload', 'err'); return; }
-    if (!title.trim()) { toast('Give this dashboard a title', 'err'); return; }
+    if (!title.trim()) { toast('Give this file a title', 'err'); return; }
 
     setUploading(true);
     try {
       const fileData = await fileToBase64(file);
-      const mimeType = /\.html?$/i.test(file.name)
-        ? 'text/html'
-        : file.name.toLowerCase().endsWith('.pptx')
-          ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-          : 'application/vnd.ms-powerpoint';
-
       await uploadDashboard({
         restaurantId: selectedRestaurant.id,
         branchId: selectedBranch.id,
@@ -1035,29 +1227,18 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
         branchName: selectedBranch.name,
         title: title.trim(),
         fileName: file.name,
-        mimeType,
+        mimeType: mimeTypeFor(file),
         fileData,
       });
       setTitle('');
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      toast('Dashboard uploaded', 'ok');
+      toast('File uploaded', 'ok');
       load();
     } catch (e: any) {
-      toast(e.message || 'Failed to upload dashboard', 'err');
+      toast(e.message || 'Failed to upload file', 'err');
     } finally {
       setUploading(false);
-    }
-  }
-
-  async function handleView(d: DashboardFile) {
-    if (d.mimeType !== 'text/html') { handleDownload(d); return; }
-    try {
-      const url = await getDashboardFileBlobUrl(d.id);
-      setPreviewUrl(url);
-      setPreviewTitle(d.title);
-    } catch (e: any) {
-      toast(e.message || 'Failed to open file', 'err');
     }
   }
 
@@ -1070,15 +1251,9 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this dashboard?')) return;
-    try { await deleteDashboard(id); toast('Dashboard deleted'); load(); }
+    if (!confirm('Delete this file?')) return;
+    try { await deleteDashboard(id); toast('File deleted'); load(); }
     catch { toast('Failed to delete', 'err'); }
-  }
-
-  function closePreview() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-    setPreviewTitle('');
   }
 
   function formatSize(bytes: number) {
@@ -1091,8 +1266,8 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
       <div className="topbar">
         <div className="topbar-inner">
           <div>
-            <div className="page-title">Dashboards</div>
-            <div className="page-sub">Store previous analysis dashboards (HTML or PowerPoint) per restaurant and branch.</div>
+            <div className="page-title">Data Uploads</div>
+            <div className="page-sub">Upload previous analysis as CSV or Excel, tied to a restaurant and branch — its data shows up on the Analytics page too.</div>
           </div>
         </div>
         <div style={{ height: 20 }} />
@@ -1100,10 +1275,10 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
 
       <div className="content">
         <div className="card">
-          <div className="card-title">Upload Dashboard</div>
+          <div className="card-title">Upload Data File</div>
           {!selectedRestaurant || !selectedBranch ? (
             <div className="location-warning" style={{ marginBottom: 0 }}>
-              ⚠ Select a restaurant and branch in the sidebar before uploading — every dashboard is tagged to that location.
+              ⚠ Select a restaurant and branch in the sidebar before uploading — every file is tagged to that location.
             </div>
           ) : (
             <>
@@ -1122,10 +1297,10 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
               >
                 <div className="drop-icon">▤</div>
                 <div className="drop-title">{file ? file.name : 'Drop a file here or click to browse'}</div>
-                <div className="drop-hint">.html, .ppt, or .pptx — up to 20MB</div>
+                <div className="drop-hint">.csv, .xls, or .xlsx — up to 20MB</div>
               </div>
               <input
-                ref={fileInputRef} type="file" accept=".html,.htm,.ppt,.pptx" style={{ display: 'none' }}
+                ref={fileInputRef} type="file" accept=".csv,.xls,.xlsx,.xlsm" style={{ display: 'none' }}
                 onChange={e => { const f = e.target.files?.[0]; if (f) handlePickFile(f); e.target.value = ''; }}
               />
 
@@ -1156,25 +1331,23 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
         ) : items.length === 0 ? (
           <div className="empty">
             <div className="empty-icon">▤</div>
-            <div className="empty-title">No dashboards yet</div>
-            <div className="empty-body">Upload an HTML or PowerPoint dashboard above to store it here.</div>
+            <div className="empty-title">No files yet</div>
+            <div className="empty-body">Upload a CSV or Excel file above to store it here and chart it on Analytics.</div>
           </div>
         ) : (
           <div className="dashboard-grid">
             {items.map(d => (
               <div key={d.id} className="dashboard-card">
-                <div className="dashboard-card-icon">{d.mimeType === 'text/html' ? '◱' : '▥'}</div>
+                <div className="dashboard-card-icon">▥</div>
                 <div className="dashboard-card-body">
                   <div className="dashboard-card-title">{d.title}</div>
                   <div className="dashboard-card-meta">
                     {d.restaurantName}{d.branchName ? ` · ${d.branchName}` : ''}<br />
                     {formatSize(d.fileSize)} · {new Date(d.createdAt).toLocaleDateString()}
                     {d.userName && <> · by {d.userName}</>}
+                    {d.tableCount > 0 && <> · {d.tableCount} sheet{d.tableCount === 1 ? '' : 's'} readable</>}
                   </div>
                   <div className="dashboard-card-actions">
-                    {d.mimeType === 'text/html' && (
-                      <button className="btn btn-outline btn-sm" onClick={() => handleView(d)}>View</button>
-                    )}
                     <button className="btn btn-outline btn-sm" onClick={() => handleDownload(d)}>Download</button>
                     <button className="btn btn-danger btn-sm" onClick={() => handleDelete(d.id)}>Delete</button>
                   </div>
@@ -1184,18 +1357,6 @@ function DashboardsView({ toast }: { toast: (m: string, t?: string) => void }) {
           </div>
         )}
       </div>
-
-      {previewUrl && (
-        <div className="modal-backdrop" onClick={closePreview}>
-          <div className="modal dashboard-preview-modal" onClick={e => e.stopPropagation()}>
-            <div className="dashboard-preview-header">
-              <div className="dashboard-preview-title">{previewTitle}</div>
-              <button className="camera-close" onClick={closePreview} aria-label="Close preview">✕</button>
-            </div>
-            <iframe src={previewUrl} className="dashboard-preview-frame" title={previewTitle} sandbox="allow-scripts allow-same-origin" />
-          </div>
-        </div>
-      )}
     </>
   );
 }

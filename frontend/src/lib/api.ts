@@ -121,7 +121,10 @@ export interface Analytics {
   failCount: number;
   byDish: { name: string; count: number; avg: number }[];
 }
-export const getAnalytics = () => req<Analytics>('/api/audits/analytics');
+export const getAnalytics = (params?: Record<string, string>) => {
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return req<Analytics>(`/api/audits/analytics${qs}`);
+};
 
 // ─── Export ───────────────────────────────────────────────
 export interface ExportRecord {
@@ -164,15 +167,21 @@ export interface DashboardFile {
   fileName: string;
   mimeType: string;
   fileSize: number;
+  tableCount: number;
   userId?: string | null;
   userName?: string | null;
   createdAt: string;
 }
 
+export interface ExtractedTable { name: string; headers: string[]; rows: string[][]; }
+
 export const getDashboards = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : '';
   return req<DashboardFile[]>(`/api/dashboards${qs}`);
 };
+
+export const getDashboardData = (id: string) =>
+  req<{ id: string; title: string; tables: ExtractedTable[] }>(`/api/dashboards/${id}/data`);
 
 export const uploadDashboard = (body: {
   restaurantId?: string; branchId?: string; restaurantName?: string; branchName?: string;

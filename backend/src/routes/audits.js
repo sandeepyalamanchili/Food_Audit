@@ -64,6 +64,7 @@ router.get('/', async (req, res) => {
 
 // GET /api/audits/analytics
 router.get('/analytics', async (req, res) => {
+  const { where, params } = buildFilters(req.query);
   try {
     const { rows: totals } = await pool.query(`
       SELECT COUNT(*) AS count,
@@ -71,12 +72,12 @@ router.get('/analytics', async (req, res) => {
              COUNT(*) FILTER (WHERE verdict = 'Pass') AS pass_count,
              COUNT(*) FILTER (WHERE verdict = 'Needs Review') AS review_count,
              COUNT(*) FILTER (WHERE verdict = 'Fail') AS fail_count
-      FROM audits
-    `);
+      FROM audits ${where}
+    `, params);
     const { rows: byDish } = await pool.query(`
       SELECT dish_name, COUNT(*) AS count, AVG(total_score / NULLIF(max_total,0) * 100) AS avg_pct
-      FROM audits GROUP BY dish_name ORDER BY avg_pct ASC LIMIT 10
-    `);
+      FROM audits ${where} GROUP BY dish_name ORDER BY avg_pct ASC LIMIT 10
+    `, params);
     const t = totals[0];
     res.json({
       totalAudits: Number(t.count),
